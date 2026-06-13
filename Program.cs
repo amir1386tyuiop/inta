@@ -1,4 +1,4 @@
-﻿using System.Threading.RateLimiting;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using inta.Data;
@@ -68,6 +68,7 @@ builder.Services.AddRateLimiter(options =>
 
 // 3. ساخت برنامه
 var app = builder.Build();
+var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
 
 // 4. میدلورها و تنظیمات خطا
 if (app.Environment.IsDevelopment())
@@ -82,26 +83,30 @@ else
     app.UseHsts();
 }
 
-// 5. تست اتصال دیتابیس (فقط در محیط توسعه)
-if (app.Environment.IsDevelopment())
+// 5. تست اتصال دیتابیس
+using (var scope = app.Services.CreateScope())
 {
-    try
-    {
-        using var scope = app.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        if (db.Database.CanConnect())
-        {
-            db.Database.EnsureCreated();
-        }
-        else
-        {
-            db.Database.EnsureCreated();
-        }
-    }
-    catch (Exception ex)
+    if (db.Database.CanConnect())
     {
-        Console.WriteLine($"Database connection failed: {ex.Message}");
+        logger.LogInformation("Database connected successfully");
+        var created = db.Database.EnsureCreated();
+        logger.LogInformation("Database tables ensured (created: {Created})", created);
+    }
+    else
+    {
+        logger.LogWarning("Cannot connect to database, attempting to create it");
+        try
+        {
+            db.Database.EnsureCreated();
+            logger.LogInformation("New database created");
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Failed to create database — the application cannot start");
+            throw;
+        }
     }
 }
 
@@ -113,5 +118,9 @@ app.UseAuthorization();
 app.UseRateLimiter();
 app.MapControllers();
 
-// 7. اجرا
+// 7. پیام راه‌اندازی
+logger.LogInformation("Application starting");
+logger.LogInformation("Swagger UI: {Url}/swagger", app.Urls.FirstOrDefault());
+
+// 8. اجرا
 app.Run();
