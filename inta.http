@@ -1,6 +1,0 @@
-@inta_HostAddress = http://localhost:5193
-
-GET {{inta_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
