@@ -1,14 +1,20 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using inta.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. تنظیمات دیتابیس
 var connectionString = builder.Configuration.GetConnectionString("WedApplication2ConnectionStrings") ??
-                       builder.Configuration.GetConnectionString("DefaultConnection") ??
-                       "Server=.;Database=bime;Trusted_Connection=True;TrustServerCertificate=True;";
+                       builder.Configuration.GetConnectionString("DefaultConnection");
 
-Console.WriteLine($"📌 Using connection string: {connectionString}");
+if (string.IsNullOrEmpty(connectionString))
+{
+    throw new InvalidOperationException(
+        "No database connection string configured. " +
+        "Set 'ConnectionStrings:DefaultConnection' in appsettings.json or environment variables.");
+}
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(connectionString));
@@ -19,63 +25,93 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
+// Authentication & Authorization
+builder.Services.AddAuthentication();
+builder.Services.AddAuthorization();
+
+// CORS — restrict to known origins in production via "AllowedOrigins" config
+var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
+                     ?? Array.Empty<string>();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+        else
+        {
+            // Development fallback — no origins allowed by default
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+    });
+});
+
+// Rate limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
 // 3. ساخت برنامه
 var app = builder.Build();
 
 // 4. میدلورها و تنظیمات خطا
 if (app.Environment.IsDevelopment())
 {
-    app.UseDeveloperExceptionPage(); // نمایش خطاهای دقیق
+    app.UseDeveloperExceptionPage();
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 else
 {
     app.UseExceptionHandler("/error");
+    app.UseHsts();
 }
 
-// 5. تست اتصال دیتابیس
-try
+// 5. تست اتصال دیتابیس (فقط در محیط توسعه)
+if (app.Environment.IsDevelopment())
 {
-    Console.WriteLine("🔍 Testing database connection...");
-    using (var scope = app.Services.CreateScope())
+    try
     {
+        using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         if (db.Database.CanConnect())
         {
-            Console.WriteLine("✅ Database connected successfully!");
-
-            // چک کردن جداول
-            var canCreate = db.Database.EnsureCreated();
-            Console.WriteLine($"📊 Database tables ensured: {canCreate}");
+            db.Database.EnsureCreated();
         }
         else
         {
-            Console.WriteLine("⚠️ Cannot connect to database. Creating new database...");
             db.Database.EnsureCreated();
-            Console.WriteLine("✅ New database created!");
         }
     }
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"❌ DATABASE ERROR: {ex.Message}");
-    if (ex.InnerException != null)
+    catch (Exception ex)
     {
-        Console.WriteLine($"📌 Inner Exception: {ex.InnerException.Message}");
+        Console.WriteLine($"Database connection failed: {ex.Message}");
     }
 }
 
 // 6. میدلورهای نهایی
 app.UseHttpsRedirection();
+app.UseCors();
+app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.MapControllers();
 
-// 7. پیام راه‌اندازی
-Console.WriteLine("🚀 Application starting...");
-Console.WriteLine($"🌐 Swagger UI: {app.Urls.FirstOrDefault()}/swagger");
-Console.WriteLine($"📊 Database: bime");
-
-// 8. اجرا
+// 7. اجرا
 app.Run();
