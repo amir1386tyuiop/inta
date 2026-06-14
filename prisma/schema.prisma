@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ===== کاربران =====
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  fullName     String
+  phone        String?
+  role         String   @default("client") // client | lawyer | admin
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // روابط
+  lawyerProfile  LawyerProfile?
+  cases          Case[]          @relation("ClientCases")
+  notifications  Notification[]
+  contactMessages ContactMessage[]
+  chatSessions   ChatSession[]
+}
+
+// ===== پروفایل وکیل =====
+model LawyerProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  licenseNumber   String   @unique
+  specializations String   // comma-separated: کیفری,حقوقی,خانواده
+  city            String
+  province        String
+  experienceYears Int      @default(0)
+  bio             String?
+  rating          Float    @default(0)
+  isVerified      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // روابط
+  cases           Case[]   @relation("LawyerCases")
+  calendarEvents  CalendarEvent[]
+}
+
+// ===== پرونده‌ها =====
+model Case {
+  id              String   @id @default(uuid())
+  title           String
+  description     String
+  caseNumber      String?  @unique
+  caseType        String   // کیفری | حقوقی | خانواده | تجاری | اداری
+  status          String   @default("open") // open | in_progress | closed | archived
+  clientId        String
+  client          User     @relation("ClientCases", fields: [clientId], references: [id], onDelete: Cascade)
+  lawyerId        String?
+  lawyer          LawyerProfile? @relation("LawyerCases", fields: [lawyerId], references: [id])
+  aiAnalysis      String?  // تحلیل هوش مصنوعی
+  aiSummary       String?  // خلاصه هوش مصنوعی
+  documents       Document[]
+  verdicts        Verdict[]
+  calendarEvents  CalendarEvent[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ===== اسناد / تصاویر =====
+model Document {
+  id          String   @id @default(uuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  fileName    String
+  filePath    String
+  fileType    String   // image | pdf | document
+  extractedText String? // متن استخراج شده با OCR
+  aiAnalysis  String?  // تحلیل هوش مصنوعی تصویر
+  createdAt   DateTime @default(now())
+}
+
+// ===== احکام =====
+model Verdict {
+  id          String   @id @default(uuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  verdictText String
+  judge       String?
+  court       String?
+  verdictDate DateTime?
+  aiAnalysis  String?  // تحلیل هوش مصنوعی حکم
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ===== تقویم دادگاه =====
+model CalendarEvent {
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  eventDate    DateTime
+  eventTime    String?  // e.g. "10:30"
+  court        String?
+  branch       String?
+  caseId       String?
+  case         Case?    @relation(fields: [caseId], references: [id])
+  lawyerId     String?
+  lawyer       LawyerProfile? @relation(fields: [lawyerId], references: [id])
+  status       String   @default("scheduled") // scheduled | completed | cancelled | postponed
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  notifications Notification[]
+}
+
+// ===== نوتیفیکیشن‌ها =====
+model Notification {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  message       String
+  type          String   @default("general") // court_reminder | case_update | general
+  isRead        Boolean  @default(false)
+  calendarEventId String?
+  calendarEvent CalendarEvent? @relation(fields: [calendarEventId], references: [id])
+  metadata      String?  // JSON string for extra data
+  createdAt     DateTime @default(now())
+}
+
+// ===== وبلاگ =====
+model BlogPost {
+  id          String   @id @default(uuid())
+  title       String
+  slug        String   @unique
+  content     String
+  excerpt     String?
+  category    String?
+  tags        String?  // comma-separated
+  authorName  String
+  isPublished Boolean  @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ===== تماس با ما =====
+model ContactMessage {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  fullName  String
+  email     String
+  phone     String?
+  subject   String
+  message   String
+  status    String   @default("new") // new | read | replied
+  reply     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ===== چت با هوش مصنوعی =====
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  messages  ChatMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String   // user | assistant | system
+  content     String
+  createdAt   DateTime @default(now())
+}
