@@ -10,7 +10,9 @@
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "build:client": "cd client && npm install && npx vite build",
+    "build": "npm run build:client"
   },
   "keywords": [
     "legal",
